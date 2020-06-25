@@ -170,7 +170,7 @@ class SiamFCTransforms(object):
     def _crop(self,img,box,out_size):
         box=np.array([
             box[1]-1+(box[3]-1)/2,
-            box[0]-1+(box[3]-1)/2,
+            box[0]-1+(box[2]-1)/2,
             box[3],box[2]
             ])
         center,target_sz=box[:2],box[2:]

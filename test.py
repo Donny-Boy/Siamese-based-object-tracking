@@ -13,7 +13,8 @@ from siamfc import TrackerSiamFC
 if __name__=='__main__':
    
     
-    net_path = '/Users/xiangli/Desktop/Object Tracking/MySiamFc/siamfc_alexnet_e50.pth'
+    net_path = '/Users/xiangli/Desktop/Object Tracking/MySiamFc/pretrained/siamfc_alexnet_e50.pth'
+    #net_path='/Users/xiangli/Desktop/Object Tracking/MySiamFc/siamfc_alexnet_e49.pth'
     tracker = TrackerSiamFC(net_path=net_path)
 
     root_dir = os.path.expanduser('/Users/xiangli/Desktop/Object Tracking/siamfc-pytorch/data/OTB')
