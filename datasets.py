@@ -46,8 +46,8 @@ cfg = {
             'r_pos': 16,
             'r_neg': 0}
 
-root_dir = os.path.expanduser('/Users/xiangli/Desktop/Object Tracking/siamfc-pytorch/data/GOT-10k')
-seqs=GOT10k(root_dir,subset='train',return_meta=True)
+#root_dir = os.path.expanduser('/Users/xiangli/Desktop/Object Tracking/siamfc-pytorch/data/GOT-10k')
+#seqs=GOT10k(root_dir,subset='train',return_meta=True)
 
 
 #Define augumentation(transformations) for the raw images

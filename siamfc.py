@@ -27,6 +27,7 @@ from got10k.trackers import Tracker
 import matplotlib.pyplot as plt
 import time
 import glob
+from torch.utils.tensorboard import SummaryWriter
 
 cfg = {
             # basic parameters
@@ -295,15 +296,15 @@ def numpy_to_im(a):
 
 class TrackerSiamFC(Tracker):
     
-    def __init__(self,net_path=None):
+    def __init__(self,net_path=None,**kwargs):
         super(TrackerSiamFC,self).__init__('SiamFC',True)
-        self.cfg=cfg
+        self.cfg=self.parse_args(**kwargs)
         
         # setup GPU device if available
         self.cuda = torch.cuda.is_available()
         self.device = torch.device('cuda:0' if self.cuda else 'cpu')
         
-        self.net=Net(backbone=backbones.AlexNetV1(),head=heads.SiamFC(out_scale=self.cfg["out_scale"]))
+        self.net=Net(backbone=backbones.AlexNetV2(),head=heads.SiamFC(out_scale=self.cfg["out_scale"]))
         #init_weights(self.net)
         if net_path is not None:
             self.net.load_state_dict(torch.load(net_path,map_location=lambda storage,loc:storage))
@@ -320,6 +321,37 @@ class TrackerSiamFC(Tracker):
             self.cfg['ultimate_lr'] / self.cfg['initial_lr'],
             1.0 / self.cfg['epoch_num'])
         self.lr_scheduler = ExponentialLR(self.optimizer, gamma)
+    
+    def parse_args(self,**kwargs):
+        cfg = {
+            # basic parameters
+            'out_scale': 0.001,
+            'exemplar_sz': 127,
+            'instance_sz': 255,
+            'context': 0.5,
+            # inference parameters
+            'scale_num': 3,
+            'scale_step': 1.0375,
+            'scale_lr': 0.59,
+            'scale_penalty': 0.9745,
+            'window_influence': 0.176,
+            'response_sz': 17,
+            'response_up': 16,
+            'total_stride': 8,
+            # train parameters
+            'epoch_num': 50,
+            'batch_size': 8,
+            'num_workers': 7,
+            'initial_lr': 1e-2,
+            'ultimate_lr': 1e-5,
+            'weight_decay': 5e-4,
+            'momentum': 0.9,
+            'r_pos': 16,
+            'r_neg': 0}
+        for key,val in kwargs.items():
+            if key in cfg:
+                cfg.update({key:val})
+        return cfg
     @torch.no_grad()
     def init(self,img,box):
         self.net.eval()
@@ -348,7 +380,8 @@ class TrackerSiamFC(Tracker):
         z=crop_and_resize(img,self.center,self.z_sz,out_size=self.cfg['exemplar_sz'],border_value=self.avg_color)
         z=torch.from_numpy(z).to(self.device).permute(2,0,1).unsqueeze(0).float()
         self.kernel=self.net.backbone(z)
-        k=self.kernel[0][0].numpy()
+        k=torch.Tensor.cpu(self.kernel)
+        k=k[0][0].numpy()
         k=numpy_to_im(k)
         k=cv2.applyColorMap(k, cv2.COLORMAP_JET)
         
@@ -372,7 +405,7 @@ class TrackerSiamFC(Tracker):
         x=self.net.backbone(x)
         #cv2.imshow('search',cv2.resize(x[0][0].numpy(),None,fx=15,fy=15))
         responses=self.net.head(self.kernel,x)
-        responses=responses.squeeze(1).numpy()
+        responses=responses.squeeze(1).cpu().numpy()
         responses = np.stack([cv2.resize(
             u, (self.upscale_sz, self.upscale_sz),
             interpolation=cv2.INTER_CUBIC)
@@ -397,7 +430,7 @@ class TrackerSiamFC(Tracker):
         
         ###############################
         #show the feature map
-        instance=cv2.resize(x[0][0].numpy(),None,fx=15,fy=15)
+        instance=cv2.resize(torch.Tensor.cpu(x[0][0]).numpy(),None,fx=15,fy=15)
         co=np.array(loc)/self.cfg['response_up']*15
         co=(int(co[1]),int(co[0]))
         radius=10
@@ -471,6 +504,9 @@ class TrackerSiamFC(Tracker):
         return loss.item()
     @torch.enable_grad()
     def train_over(self,seqs,val_seqs=None,save_dir='pretrained'):
+        writer=SummaryWriter()
+        val_dir=os.path.expanduser('C:/Users/xw/Desktop/Siamese-based-object-tracking/data/GOT-10k/')
+        val_seqs=GOT10k(val_dir, subset='val', return_meta=True)
         self.net.train()
         if not os.path.exists(save_dir):
             os.makedirs(save_dir)
@@ -478,33 +514,64 @@ class TrackerSiamFC(Tracker):
             exemplar_sz=self.cfg['exemplar_sz'],
             instance_sz=self.cfg['instance_sz'],
             context=self.cfg['context'])
-    
+        
+        val_dataset=datasets.Pair(seqs=val_seqs,transforms=transforms)
+        val_dataloader=DataLoader(
+            val_dataset,
+            batch_size=self.cfg['batch_size'],
+            shuffle=False,
+            num_workers=self.cfg['num_workers'],
+            pin_memory=self.cuda,
+            drop_last=False
+            )
+        
         dataset = datasets.Pair(
             seqs=seqs,
             transforms=transforms)
     
         dataloader = DataLoader(
             dataset,
-            batch_size=cfg['batch_size'],
+            batch_size=self.cfg['batch_size'],
             shuffle=True,
-            num_workers=cfg['num_workers'],
+            num_workers=self.cfg['num_workers'],
             pin_memory=self.cuda,
             drop_last=True)
-        for epoch in range(cfg['epoch_num']):
+        for epoch in range(self.cfg['epoch_num']):
             self.lr_scheduler.step(epoch=epoch)
-        
+            train_Loss=0
+            count1=0
+            count2=0
             for it, batch in enumerate(dataloader):
+                count1=count1+1
                 loss=self.train_step(batch,self.optimizer,backward=True)
+                train_Loss=train_Loss+loss
+                #count=count+1
                 print('Epoch: {} [{}/{}] Loss: {:.5f}'.format(
                     epoch + 1, it + 1, len(dataloader), loss))
                 sys.stdout.flush()
-        
+            ############################################################
+            ######################validation############################
+            with torch.no_grad():
+                self.net.eval()
+                val_loss=0
+                for it,batch in enumerate(val_dataloader):
+                    z=batch[0].to(self.device, non_blocking=self.cuda)
+                    x=batch[1].to(self.device, non_blocking=self.cuda)
+                    responses=self.net(z,x)
+                    labels=self._create_lables(responses.size())
+                    val_loss=val_loss+self.criterion(responses,labels).item()
+                    count2=count2+1
+                writer.add_scalar('validation loss',val_loss/count2,epoch+1)
+                print('average validation loss:',val_loss/count2)
+                
+            #print(train_Loss)
+            writer.add_scalar('training loss',train_Loss/count1,epoch+1)
             if not os.path.exists(save_dir):
                 os.makedirs(save_dir)
-                net_path = os.path.join(
+            net_path = os.path.join(
                 save_dir, 'siamfc_alexnet_e%d.pth' % (epoch + 1))
             torch.save(self.net.state_dict(), net_path)
-    
+        writer.close()     
     def _create_lables(self,size):
         if hasattr(self, 'labels') and self.labels.size() == size:
             return self.labels
@@ -544,10 +611,15 @@ if __name__=="__main__":
     netpath='/Users/xiangli/Desktop/Object Tracking/MySiamFc/siamfc_alexnet_e49.pth'
     tracker=TrackerSiamFC(net_path=netpath)
     tracker.track(img_files,box,visualize=True)'''
-    root_dir = os.path.expanduser('/Users/xiangli/Desktop/Object Tracking/siamfc-pytorch/data/GOT-10k')
+    
+    
+    
+    print(torch.cuda.is_available())
+    root_dir = os.path.expanduser('C:/Users/xw/Desktop/Siamese-based-object-tracking/data/GOT-10k')
     seqs = GOT10k(root_dir, subset='train', return_meta=True)
-    tracker = TrackerSiamFC()
+    tracker = TrackerSiamFC(response_sz=33,response_up=8,total_stride=4)
     tracker.train_over(seqs)
+    
     
     
     
