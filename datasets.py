@@ -46,8 +46,8 @@ cfg = {
             'r_pos': 16,
             'r_neg': 0}
 
-root_dir = os.path.expanduser('/Users/xiangli/Desktop/Object Tracking/siamfc-pytorch/data/GOT-10k')
-seqs=GOT10k(root_dir,subset='train',return_meta=True)
+#root_dir = os.path.expanduser('/Users/xiangli/Desktop/Object Tracking/siamfc-pytorch/data/GOT-10k')
+#seqs=GOT10k(root_dir,subset='train',return_meta=True)
 
 
 #Define augumentation(transformations) for the raw images
@@ -170,7 +170,7 @@ class SiamFCTransforms(object):
     def _crop(self,img,box,out_size):
         box=np.array([
             box[1]-1+(box[3]-1)/2,
-            box[0]-1+(box[3]-1)/2,
+            box[0]-1+(box[2]-1)/2,
             box[3],box[2]
             ])
         center,target_sz=box[:2],box[2:]
