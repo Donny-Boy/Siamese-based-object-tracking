@@ -94,6 +94,7 @@ if __name__=="__main__":
     outputEx=model(exemplar)
     searchImage=torch.randn(1,3,255,255)
     outputSeach=model(searchImage)
+    
     print('shape 1: ',outputEx.shape)
     print('shape 2: ',outputSeach.shape)
     
